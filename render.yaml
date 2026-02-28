@@ -1,0 +1,38 @@
+databases:
+  - name: agentguard-postgres
+    databaseName: agentguard
+    user: agentguard
+
+services:
+  - type: web
+    name: agentguard-api
+    runtime: node
+    plan: starter
+    autoDeploy: true
+    buildCommand: npm install && npm run build --workspace @agentguard/shared && npm run build --workspace @agentguard/api && npm run db:generate
+    startCommand: npm run db:migrate && npm run start --workspace @agentguard/api
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: DATABASE_URL
+        fromDatabase:
+          name: agentguard-postgres
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: AGENT_KEY_SALT
+        generateValue: true
+      - key: APPROVAL_SIGNING_SECRET
+        generateValue: true
+      - key: CORS_ORIGIN
+        value: https://YOUR_VERCEL_DOMAIN
+      - key: DEFAULT_TIMEZONE
+        value: Asia/Kolkata
+      - key: DEPLOY_REGION
+        value: us-east-1
+      - key: PRIVATE_DEPLOYMENT_MODE
+        value: "false"

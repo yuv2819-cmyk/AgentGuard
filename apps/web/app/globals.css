@@ -1,0 +1,36 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --bg: 248 250 252;
+  --panel: 255 255 255;
+  --text: 15 23 42;
+  --muted: 100 116 139;
+  --ring: 79 70 229;
+}
+
+body {
+  background:
+    radial-gradient(circle at 20% 10%, rgba(99, 102, 241, 0.12), transparent 35%),
+    radial-gradient(circle at 80% 0%, rgba(16, 185, 129, 0.1), transparent 32%),
+    rgb(var(--bg));
+  color: rgb(var(--text));
+  font-family: 'Segoe UI', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  min-height: 100vh;
+}
+
+* {
+  border-color: rgb(226 232 240);
+}
+
+:focus-visible {
+  outline: 2px solid rgb(var(--ring));
+  outline-offset: 2px;
+}
+
+.panel {
+  background: rgb(var(--panel));
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.06);
+}

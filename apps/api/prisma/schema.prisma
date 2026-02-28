@@ -1,0 +1,470 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  OWNER
+  MEMBER
+}
+
+enum AgentStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum PolicyMode {
+  STRICT
+  BALANCED
+}
+
+enum Decision {
+  ALLOW
+  BLOCK
+}
+
+enum PolicyStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+enum IntegrationType {
+  GENERIC_WEBHOOK
+}
+
+enum PermissionEffect {
+  ALLOW
+  DENY
+}
+
+model User {
+  id            String            @id @default(uuid()) @db.Uuid
+  email         String            @unique
+  passwordHash  String            @map("password_hash")
+  createdAt     DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  memberships   WorkspaceMember[]
+  policyApprovalSignatures PolicyApprovalSignature[]
+  compliancePacks ComplianceEvidencePack[]
+  policySyncRuns PolicySyncRun[]
+  scimTokensCreated WorkspaceScimToken[]
+
+  @@map("users")
+}
+
+model Workspace {
+  id               String                 @id @default(uuid()) @db.Uuid
+  name             String
+  timezone         String
+  createdAt        DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  members          WorkspaceMember[]
+  agents           Agent[]
+  policies         Policy[]
+  auditEvents      AuditLogEvent[]
+  chainState       AuditChainState?
+  approvals        ActionApprovalRequest[]
+  integrations     WorkspaceIntegration[]
+  rolePermissions  WorkspaceRolePermission[]
+  identityProviders WorkspaceIdentityProvider[]
+  scimTokens       WorkspaceScimToken[]
+  policySyncConfig PolicyGitSyncConfig?
+  policySyncRuns   PolicySyncRun[]
+  runtimeConnections RuntimeConnection[]
+  baselines        AgentActionBaseline[]
+  playbooks        WorkspacePlaybook[]
+  playbookExecutions PlaybookExecution[]
+  compliancePacks  ComplianceEvidencePack[]
+  trustAttestations TrustAttestation[]
+
+  @@map("workspaces")
+}
+
+model WorkspaceMember {
+  id          String     @id @default(uuid()) @db.Uuid
+  workspaceId String     @map("workspace_id") @db.Uuid
+  userId      String     @map("user_id") @db.Uuid
+  role        Role
+  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  workspace   Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+  @@map("workspace_members")
+}
+
+model Policy {
+  id                 String                    @id @default(uuid()) @db.Uuid
+  workspaceId        String                    @map("workspace_id") @db.Uuid
+  name               String
+  description        String?
+  mode               PolicyMode
+  rules              Json                      @db.JsonB
+  version            Int                       @default(1)
+  status             PolicyStatus              @default(DRAFT)
+  submittedByUserId  String?                   @map("submitted_by_user_id") @db.Uuid
+  submittedAt        DateTime?                 @map("submitted_at") @db.Timestamptz(6)
+  approvedByUserId   String?                   @map("approved_by_user_id") @db.Uuid
+  approvedAt         DateTime?                 @map("approved_at") @db.Timestamptz(6)
+  rejectionReason    String?                   @map("rejection_reason")
+  syncSource         String?                   @map("sync_source")
+  createdAt          DateTime                  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime                  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace          Workspace                 @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  agents             Agent[]
+  versions           PolicyVersion[]
+  approvalSignatures PolicyApprovalSignature[]
+
+  @@index([workspaceId])
+  @@index([rules], type: Gin)
+  @@map("policies")
+}
+
+model Agent {
+  id               String                  @id @default(uuid()) @db.Uuid
+  workspaceId      String                  @map("workspace_id") @db.Uuid
+  name             String
+  description      String?
+  environmentTag   String                  @map("environment_tag")
+  status           AgentStatus             @default(ACTIVE)
+  activePolicyId   String?                 @map("active_policy_id") @db.Uuid
+  createdAt        DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime                @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace        Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  activePolicy     Policy?                 @relation(fields: [activePolicyId], references: [id], onDelete: SetNull)
+  apiKeys          AgentApiKey[]
+  auditEvents      AuditLogEvent[]
+  approvalRequests ActionApprovalRequest[]
+  baselines        AgentActionBaseline[]
+  playbookExecutions PlaybookExecution[]
+
+  @@index([workspaceId])
+  @@map("agents")
+}
+
+model AgentApiKey {
+  id         String    @id @default(uuid()) @db.Uuid
+  agentId    String    @map("agent_id") @db.Uuid
+  keyHash    String    @unique @map("key_hash")
+  keyPrefix  String    @map("key_prefix")
+  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz(6)
+  lastUsedAt DateTime? @map("last_used_at") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  agent      Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([agentId])
+  @@map("agent_api_keys")
+}
+
+model AuditLogEvent {
+  id             String    @id @default(uuid()) @db.Uuid
+  workspaceId    String    @map("workspace_id") @db.Uuid
+  agentId        String?   @map("agent_id") @db.Uuid
+  tool           String
+  action         String
+  resource       String?
+  decision       Decision
+  reason         String
+  metadata       Json      @db.JsonB
+  anomalyFlagged Boolean   @default(false) @map("anomaly_flagged")
+  prevHash       String    @map("prev_hash")
+  hash           String
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  agent          Agent?    @relation(fields: [agentId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@index([agentId, createdAt(sort: Desc)])
+  @@index([metadata], type: Gin)
+  @@map("audit_log_events")
+}
+
+model AuditChainState {
+  workspaceId  String    @id @map("workspace_id") @db.Uuid
+  lastEventId  String?   @map("last_event_id") @db.Uuid
+  lastHash     String    @map("last_hash")
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@map("audit_chain_state")
+}
+
+model PolicyVersion {
+  id              String     @id @default(uuid()) @db.Uuid
+  policyId        String     @map("policy_id") @db.Uuid
+  version         Int
+  mode            PolicyMode
+  rules           Json       @db.JsonB
+  changeSummary   String?    @map("change_summary")
+  createdByUserId String?    @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  policy          Policy     @relation(fields: [policyId], references: [id], onDelete: Cascade)
+
+  @@unique([policyId, version])
+  @@index([policyId, createdAt(sort: Desc)])
+  @@map("policy_versions")
+}
+
+model ActionApprovalRequest {
+  id               String         @id @default(uuid()) @db.Uuid
+  workspaceId      String         @map("workspace_id") @db.Uuid
+  agentId          String         @map("agent_id") @db.Uuid
+  tool             String
+  action           String
+  resource         String?
+  metadata         Json           @db.JsonB
+  status           ApprovalStatus @default(PENDING)
+  riskScore        Int            @default(0) @map("risk_score")
+  requestedBy      String         @default("SYSTEM") @map("requested_by")
+  requestedAt      DateTime       @default(now()) @map("requested_at") @db.Timestamptz(6)
+  expiresAt        DateTime       @map("expires_at") @db.Timestamptz(6)
+  resolvedByUserId String?        @map("resolved_by_user_id") @db.Uuid
+  resolvedAt       DateTime?      @map("resolved_at") @db.Timestamptz(6)
+  resolutionNote   String?        @map("resolution_note")
+  consumedAt       DateTime?      @map("consumed_at") @db.Timestamptz(6)
+  workspace        Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  agent            Agent          @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, status, requestedAt(sort: Desc)])
+  @@index([agentId, status])
+  @@map("action_approval_requests")
+}
+
+model WorkspaceIntegration {
+  id            String          @id @default(uuid()) @db.Uuid
+  workspaceId   String          @map("workspace_id") @db.Uuid
+  type          IntegrationType @default(GENERIC_WEBHOOK)
+  webhookUrl    String          @map("webhook_url")
+  signingSecret String?         @map("signing_secret")
+  active        Boolean         @default(true)
+  createdAt     DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace     Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, type])
+  @@index([workspaceId])
+  @@map("workspace_integrations")
+}
+
+model WorkspaceRolePermission {
+  id          String           @id @default(uuid()) @db.Uuid
+  workspaceId String           @map("workspace_id") @db.Uuid
+  role        Role
+  permission  String
+  effect      PermissionEffect @default(ALLOW)
+  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace   Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, role, permission])
+  @@index([workspaceId, role])
+  @@map("workspace_role_permissions")
+}
+
+model WorkspaceIdentityProvider {
+  id           String    @id @default(uuid()) @db.Uuid
+  workspaceId  String    @map("workspace_id") @db.Uuid
+  name         String
+  issuer       String
+  audience     String
+  domain       String?
+  sharedSecret String    @map("shared_secret")
+  jitEnabled   Boolean   @default(true) @map("jit_enabled")
+  active       Boolean   @default(true)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, issuer, audience])
+  @@index([workspaceId, active])
+  @@map("workspace_identity_providers")
+}
+
+model WorkspaceScimToken {
+  id              String    @id @default(uuid()) @db.Uuid
+  workspaceId     String    @map("workspace_id") @db.Uuid
+  tokenHash       String    @unique @map("token_hash")
+  tokenPrefix     String    @map("token_prefix")
+  description     String?
+  revokedAt       DateTime? @map("revoked_at") @db.Timestamptz(6)
+  lastUsedAt      DateTime? @map("last_used_at") @db.Timestamptz(6)
+  createdByUserId String?   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdBy       User?     @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, revokedAt])
+  @@map("workspace_scim_tokens")
+}
+
+model PolicyApprovalSignature {
+  id           String   @id @default(uuid()) @db.Uuid
+  policyId     String   @map("policy_id") @db.Uuid
+  version      Int
+  signerUserId String   @map("signer_user_id") @db.Uuid
+  payloadHash  String   @map("payload_hash")
+  signature    String
+  note         String?
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  policy       Policy   @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  signer       User     @relation(fields: [signerUserId], references: [id], onDelete: Cascade)
+
+  @@index([policyId, version, createdAt(sort: Desc)])
+  @@map("policy_approval_signatures")
+}
+
+model PolicyGitSyncConfig {
+  id               String    @id @default(uuid()) @db.Uuid
+  workspaceId      String    @unique @map("workspace_id") @db.Uuid
+  provider         String
+  repoUrl          String    @map("repo_url")
+  branch           String    @default("main")
+  path             String    @default("policies")
+  active           Boolean   @default(true)
+  lastSyncedCommit String?   @map("last_synced_commit")
+  lastSyncedAt     DateTime? @map("last_synced_at") @db.Timestamptz(6)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@map("policy_git_sync_configs")
+}
+
+model PolicySyncRun {
+  id              String    @id @default(uuid()) @db.Uuid
+  workspaceId     String    @map("workspace_id") @db.Uuid
+  commitSha       String?   @map("commit_sha")
+  importedCount   Int       @default(0) @map("imported_count")
+  summary         String?
+  createdByUserId String?   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdBy       User?     @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@map("policy_sync_runs")
+}
+
+model RuntimeConnection {
+  id            String    @id @default(uuid()) @db.Uuid
+  workspaceId   String    @map("workspace_id") @db.Uuid
+  provider      String
+  name          String
+  apiKeyHash    String?   @map("api_key_hash")
+  webhookSecret String?   @map("webhook_secret")
+  active        Boolean   @default(true)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, provider, name])
+  @@index([workspaceId, provider, active])
+  @@map("runtime_connections")
+}
+
+model AgentActionBaseline {
+  id           String    @id @default(uuid()) @db.Uuid
+  workspaceId  String    @map("workspace_id") @db.Uuid
+  agentId      String    @map("agent_id") @db.Uuid
+  tool         String
+  action       String
+  avgRiskScore Float     @default(0) @map("avg_risk_score")
+  avgPerMinute Float     @default(0) @map("avg_per_minute")
+  sampleCount  Int       @default(0) @map("sample_count")
+  lastSeenAt   DateTime? @map("last_seen_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  agent        Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@unique([agentId, tool, action])
+  @@index([workspaceId, agentId])
+  @@map("agent_action_baselines")
+}
+
+model WorkspacePlaybook {
+  id              String    @id @default(uuid()) @db.Uuid
+  workspaceId     String    @map("workspace_id") @db.Uuid
+  name            String
+  description     String?
+  enabled         Boolean   @default(true)
+  triggerDecision Decision? @map("trigger_decision")
+  minRiskScore    Int       @default(0) @map("min_risk_score")
+  matchSignals    Json      @default("[]") @map("match_signals") @db.JsonB
+  actionType      String    @map("action_type")
+  actionConfig    Json      @default("{}") @map("action_config") @db.JsonB
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  executions      PlaybookExecution[]
+
+  @@index([workspaceId, enabled])
+  @@map("workspace_playbooks")
+}
+
+model PlaybookExecution {
+  id         String    @id @default(uuid()) @db.Uuid
+  playbookId String    @map("playbook_id") @db.Uuid
+  workspaceId String   @map("workspace_id") @db.Uuid
+  agentId    String?   @map("agent_id") @db.Uuid
+  eventId    String?   @map("event_id") @db.Uuid
+  status     String
+  message    String?
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  playbook   WorkspacePlaybook @relation(fields: [playbookId], references: [id], onDelete: Cascade)
+  workspace  Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  agent      Agent?    @relation(fields: [agentId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@index([playbookId, createdAt(sort: Desc)])
+  @@map("playbook_executions")
+}
+
+model ComplianceEvidencePack {
+  id              String    @id @default(uuid()) @db.Uuid
+  workspaceId     String    @map("workspace_id") @db.Uuid
+  framework       String
+  fromAt          DateTime  @map("from_at") @db.Timestamptz(6)
+  toAt            DateTime  @map("to_at") @db.Timestamptz(6)
+  generatedByUserId String  @map("generated_by_user_id") @db.Uuid
+  summary         Json      @db.JsonB
+  sha256          String
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  generatedBy     User      @relation(fields: [generatedByUserId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@index([framework, createdAt(sort: Desc)])
+  @@map("compliance_evidence_packs")
+}
+
+model TrustAttestation {
+  id          String    @id @default(uuid()) @db.Uuid
+  workspaceId String?   @map("workspace_id") @db.Uuid
+  title       String
+  description String
+  status      String    @default("ACTIVE")
+  issuedBy    String    @map("issued_by")
+  issuedAt    DateTime  @map("issued_at") @db.Timestamptz(6)
+  isPublic    Boolean   @default(true) @map("public")
+  artifactUrl String?   @map("artifact_url")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  workspace   Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+
+  @@index([isPublic, issuedAt(sort: Desc)])
+  @@index([workspaceId, issuedAt(sort: Desc)])
+  @@map("trust_attestations")
+}

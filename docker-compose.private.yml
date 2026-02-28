@@ -1,0 +1,21 @@
+version: '3.9'
+services:
+  postgres:
+    networks:
+      - private_net
+
+  api:
+    environment:
+      PRIVATE_DEPLOYMENT_MODE: 'true'
+      DEPLOY_REGION: us-east-1-private
+      APPROVAL_SIGNING_SECRET: private_mode_signing_secret_replace_me
+    networks:
+      - private_net
+
+  web:
+    networks:
+      - private_net
+
+networks:
+  private_net:
+    driver: bridge

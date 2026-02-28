@@ -1,0 +1,48 @@
+version: '3.9'
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: agentguard-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: agentguard
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: agentguard-api
+    depends_on:
+      - postgres
+    environment:
+      NODE_ENV: development
+      PORT: 4000
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/agentguard
+      JWT_SECRET: dev_jwt_secret_replace_this_value
+      AGENT_KEY_SALT: dev_agent_salt_replace_this_value
+      CORS_ORIGIN: http://localhost:3000
+      DEFAULT_TIMEZONE: Asia/Kolkata
+    ports:
+      - '4000:4000'
+    command: sh -c "npm run db:migrate && npm run db:seed && node apps/api/dist/index.js"
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    container_name: agentguard-web
+    depends_on:
+      - api
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:4000/v1
+    ports:
+      - '3000:3000'
+
+volumes:
+  postgres_data:
